@@ -101,16 +101,13 @@ This plugin is intended to be one layer in a broader security strategy.
 
 == Changelog ==
 
-= 1.1.1 =
-
-* Added simple login attempt limiting with temporary lockout
-* Documented configuration filters
-
 = 1.0.0 =
 
 * Initial release
 * Strong password enforcement
 * Removed weak password bypass
+* Added simple login attempt limiting with temporary lockout
+* Documented configuration filters
 
 == License ==
 
