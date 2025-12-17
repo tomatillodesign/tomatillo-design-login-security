@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Tomatillo Design – Login Security
  * Description: Enforces strong WordPress passwords, removes weak password bypass, and limits login attempts (simple lockout).
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Tomatillo Design
  * License: GPL-2.0+
  */
@@ -37,27 +37,28 @@ if ( ! defined( 'ABSPATH' ) ) {
  * });
  *
  * add_filter( 'tdls_login_transient_prefix', function() {
- *     return 'tdls_ll_'; // default 'tdls_ll_' (change if needed)
+ *     return 'tdls_ll_'; // default 'tdls_ll_'
  * });
  *
  * IMPORTANT (reverse proxy/CDN):
  * By default we use $_SERVER['REMOTE_ADDR'].
- * If your site is behind Cloudflare / a reverse proxy, you may need to override IP detection:
+ * If your site is behind Cloudflare / a reverse proxy, you may need to override IP detection
+ * using a trusted header appropriate for your environment:
  *
  * add_filter( 'tdls_login_client_ip', function( $ip ) {
- *     // Example ONLY — use *trusted* headers for your environment.
+ *     // Example ONLY — do not blindly trust arbitrary headers.
  *     // return isset($_SERVER['HTTP_CF_CONNECTING_IP']) ? $_SERVER['HTTP_CF_CONNECTING_IP'] : $ip;
  *     return $ip;
  * });
  *
- * ABOUT "bot hammers my username from other IPs":
- * This plugin does NOT do a global username lockout by default (to avoid easy DoS).
- * Lockouts are per-IP and per-IP+username, so attackers lock themselves out, not you.
+ * NOTE:
+ * This plugin does NOT implement global username lockouts (to avoid easy DoS).
+ * Lockouts are per-IP and per-IP+username by default.
  */
 
 final class Tomatillo_Design_Login_Security {
 
-	const VERSION = '1.1.1';
+	const VERSION = '1.1.2';
 
 	public static function init(): void {
 
@@ -87,6 +88,8 @@ final class Tomatillo_Design_Login_Security {
 	 */
 
 	public static function admin_remove_weak_pw_checkbox(): void {
+
+		// Only runs where WP has enqueued this script (user/profile screens).
 		wp_add_inline_script(
 			'password-strength-meter',
 			"jQuery(function($){
@@ -97,12 +100,30 @@ final class Tomatillo_Design_Login_Security {
 		);
 	}
 
-	public static function enforce_strong_password_on_profile_save( WP_Error $errors, bool $update, WP_User $user ): void {
+	/**
+	 * WP sometimes passes a lightweight stdClass user object into this hook.
+	 * Do NOT typehint WP_User here; normalize safely.
+	 */
+	public static function enforce_strong_password_on_profile_save( WP_Error $errors, bool $update, $user ): void {
+
+		// Normalize $user (WP_User or stdClass with ->ID).
+		if ( $user instanceof WP_User ) {
+			// ok
+		} elseif ( is_object( $user ) && isset( $user->ID ) ) {
+			$user = get_user_by( 'id', (int) $user->ID );
+		}
+
+		if ( ! ( $user instanceof WP_User ) ) {
+			return;
+		}
+
+		// Only validate when a password is being set/changed.
 		$pass1 = isset( $_POST['pass1'] ) ? (string) $_POST['pass1'] : '';
 		if ( '' === $pass1 ) {
 			return;
 		}
 
+		// If pass2 exists, ensure matching.
 		$pass2 = isset( $_POST['pass2'] ) ? (string) $_POST['pass2'] : '';
 		if ( '' !== $pass2 && $pass1 !== $pass2 ) {
 			$errors->add( 'tdls_password_mismatch', __( 'Passwords do not match.', 'tomatillo-design-login-security' ) );
@@ -113,6 +134,7 @@ final class Tomatillo_Design_Login_Security {
 	}
 
 	public static function enforce_strong_password_on_reset( WP_Error $errors, WP_User $user ): WP_Error {
+
 		$pass1 = isset( $_POST['pass1'] ) ? (string) $_POST['pass1'] : '';
 		if ( '' === $pass1 ) {
 			return $errors;
@@ -122,11 +144,20 @@ final class Tomatillo_Design_Login_Security {
 		return $errors;
 	}
 
+	/**
+	 * Password rules:
+	 * - 12+ characters
+	 * - must include uppercase, lowercase, number, special char
+	 */
 	private static function validate_password_or_add_errors( string $password, WP_Error $errors ): void {
+
 		$password = (string) $password;
 
 		if ( strlen( $password ) < 12 ) {
-			$errors->add( 'tdls_pw_length', __( 'Password must be at least 12 characters long.', 'tomatillo-design-login-security' ) );
+			$errors->add(
+				'tdls_pw_length',
+				__( 'Password must be at least 12 characters long.', 'tomatillo-design-login-security' )
+			);
 		}
 
 		$has_upper   = (bool) preg_match( '/[A-Z]/', $password );
@@ -142,12 +173,15 @@ final class Tomatillo_Design_Login_Security {
 		}
 
 		if ( $password !== trim( $password ) ) {
-			$errors->add( 'tdls_pw_whitespace', __( 'Password cannot begin or end with whitespace.', 'tomatillo-design-login-security' ) );
+			$errors->add(
+				'tdls_pw_whitespace',
+				__( 'Password cannot begin or end with whitespace.', 'tomatillo-design-login-security' )
+			);
 		}
 	}
 
 	/* ============================================================
-	 * Login attempt limiting
+	 * Login attempt limiting (simple)
 	 * ============================================================
 	 */
 
@@ -170,6 +204,7 @@ final class Tomatillo_Design_Login_Security {
 	}
 
 	private static function get_client_ip(): string {
+
 		$ip = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : '';
 		$ip = apply_filters( 'tdls_login_client_ip', $ip );
 
@@ -196,10 +231,20 @@ final class Tomatillo_Design_Login_Security {
 		return self::get_prefix() . 'ipl_' . md5( $ip . '|' . $login );
 	}
 
+	/**
+	 * Data shape in transient:
+	 * [
+	 *   'count'      => int,
+	 *   'lock_until' => int (unix timestamp) or 0,
+	 *   'updated'    => int (unix timestamp),
+	 * ]
+	 */
 	private static function get_state( string $key ): array {
+
 		$state = get_transient( $key );
+
 		if ( ! is_array( $state ) ) {
-			$state = [
+			return [
 				'count'      => 0,
 				'lock_until' => 0,
 				'updated'    => time(),
@@ -222,15 +267,18 @@ final class Tomatillo_Design_Login_Security {
 	}
 
 	private static function is_locked( array $state ): bool {
-		return ( isset( $state['lock_until'] ) && (int) $state['lock_until'] > time() );
+		return (int) $state['lock_until'] > time();
 	}
 
 	private static function seconds_remaining( array $state ): int {
-		$until = isset( $state['lock_until'] ) ? (int) $state['lock_until'] : 0;
-		return max( 0, $until - time() );
+		return max( 0, (int) $state['lock_until'] - time() );
 	}
 
-	public static function maybe_block_locked_out_login( $user, string $username, string $password ) {
+	/**
+	 * If locked, block authentication immediately.
+	 * IMPORTANT: Do not typehint $username/$password as string (can be null in some flows).
+	 */
+	public static function maybe_block_locked_out_login( $user, $username, $password ) {
 
 		if ( is_wp_error( $user ) ) {
 			return $user;
@@ -256,6 +304,7 @@ final class Tomatillo_Design_Login_Security {
 		}
 
 		if ( $locked_seconds > 0 ) {
+			// Used only to show a friendly error message; short TTL.
 			set_transient( self::get_prefix() . 'last_lock_msg', $locked_seconds, 60 );
 
 			return new WP_Error(
@@ -267,17 +316,25 @@ final class Tomatillo_Design_Login_Security {
 		return $user;
 	}
 
-	public static function record_failed_login( string $username ): void {
+	/**
+	 * Record failed attempts and lock after threshold.
+	 */
+	public static function record_failed_login( $username ): void {
+
+		$username = (string) $username;
 
 		$max  = self::get_max_attempts();
 		$lock = self::get_lockout_seconds();
 		$ip   = self::get_client_ip();
 		$now  = time();
 
+		// 1) IP-only tracking.
 		if ( self::use_ip_key() ) {
+
 			$key   = self::key_for_ip( $ip );
 			$state = self::get_state( $key );
 
+			// If lock expired, reset.
 			if ( (int) $state['lock_until'] <= $now ) {
 				$state['count']      = 0;
 				$state['lock_until'] = 0;
@@ -287,15 +344,17 @@ final class Tomatillo_Design_Login_Security {
 			$state['updated'] = $now;
 
 			if ( $state['count'] >= $max ) {
-				$state['lock_until'] = $now + $lock;
 				$state['count']      = $max;
+				$state['lock_until'] = $now + $lock;
 			}
 
 			self::set_state( $key, $state );
 		}
 
-		if ( self::use_combined_key() && '' !== (string) $username ) {
-			$key   = self::key_for_ip_login( $ip, (string) $username );
+		// 2) IP + username tracking.
+		if ( self::use_combined_key() && '' !== $username ) {
+
+			$key   = self::key_for_ip_login( $ip, $username );
 			$state = self::get_state( $key );
 
 			if ( (int) $state['lock_until'] <= $now ) {
@@ -307,15 +366,19 @@ final class Tomatillo_Design_Login_Security {
 			$state['updated'] = $now;
 
 			if ( $state['count'] >= $max ) {
-				$state['lock_until'] = $now + $lock;
 				$state['count']      = $max;
+				$state['lock_until'] = $now + $lock;
 			}
 
 			self::set_state( $key, $state );
 		}
 	}
 
+	/**
+	 * On successful login, clear attempts for this IP and this IP+username.
+	 */
 	public static function clear_attempts_on_success( string $user_login, WP_User $user ): void {
+
 		$ip = self::get_client_ip();
 
 		if ( self::use_ip_key() ) {
@@ -327,7 +390,11 @@ final class Tomatillo_Design_Login_Security {
 		}
 	}
 
+	/**
+	 * Optional: show approximate remaining lockout time.
+	 */
 	public static function maybe_customize_login_error( string $errors ): string {
+
 		$remaining = (int) get_transient( self::get_prefix() . 'last_lock_msg' );
 		if ( $remaining <= 0 ) {
 			return $errors;
