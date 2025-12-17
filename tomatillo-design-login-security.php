@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Tomatillo Design – Login Security
  * Description: Enforces strong WordPress passwords, removes weak password bypass, and limits login attempts (simple lockout).
- * Version: 1.1.2
+ * Version: 1.0
  * Author: Tomatillo Design
  * License: GPL-2.0+
  */
