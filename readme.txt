@@ -3,7 +3,7 @@ Contributors: tomatillodesign
 Tags: security, login, passwords, brute-force, hardening
 Requires at least: 6.0
 Tested up to: 6.9
-Stable tag: 1.1.1
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: [https://www.gnu.org/licenses/gpl-2.0.html](https://www.gnu.org/licenses/gpl-2.0.html)
 
@@ -100,6 +100,43 @@ This plugin is intended to be one layer in a broader security strategy.
 * Safe to use alongside two-factor authentication and firewall plugins
 
 == Changelog ==
+
+= 1.2.0 =
+
+**Security Fixes:**
+
+* Fixed lockout extension DoS vulnerability — attackers can no longer indefinitely extend lockouts by continuing failed attempts
+* Fixed global lockout message leak — lockout messages are now properly scoped per-IP instead of showing to all users
+
+**Major Improvements:**
+
+* Replaced hard 24-hour lockouts with progressive throttling (2s → 5s → 15s → 60s delays)
+* Added sliding window reset (default 15 minutes) to prevent infinite count accumulation
+* Added emergency hard lock backstop for extreme abuse (default: 25 failures in window → 15 minute lock)
+* Progressive throttling is much safer on shared IPs and CDN/edge environments (WP Engine, Rocket.net)
+
+**Password Policy (NIST-aligned):**
+
+* Rigid complexity requirements (uppercase/lowercase/number/special) now optional and disabled by default
+* Added context-aware denylist screening — rejects passwords containing username, email, site tokens
+* Added common weak password screening (password, 123456, qwerty, etc.)
+* Improved error message specificity and clarity
+* Weak password checkbox removal now optional (default OFF) — respects WordPress UI conventions
+
+**New Filters:**
+
+* `tdls_login_window_seconds` — sliding window for count reset (default 900 = 15 minutes)
+* `tdls_login_throttle_ladder` — customize progressive delay steps
+* `tdls_login_throttle_default_cap` — delay cap for counts beyond ladder
+* `tdls_login_hard_lock_threshold` — emergency hard lock threshold
+* `tdls_login_hard_lock_duration` — emergency hard lock duration
+* `tdls_pw_min_length` — minimum password length
+* `tdls_pw_require_complexity` — enable/disable rigid complexity rules
+* `tdls_pw_check_username` — screen for username/display name in passwords
+* `tdls_pw_check_email` — screen for email local-part in passwords
+* `tdls_pw_check_site_tokens` — screen for site domain/name in passwords
+* `tdls_pw_weak_list` — customize weak password denylist
+* `tdls_remove_weak_checkbox` — control weak password checkbox removal
 
 = 1.0.0 =
 
